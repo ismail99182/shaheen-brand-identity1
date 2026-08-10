@@ -1521,22 +1521,28 @@
     // Exponential Backoff API Fetch Helper
     async function fetchGeminiWithBackoff(url, options, maxRetries = 3) {
       let delay = 1000;
+      let lastError = null;
+
       for (let i = 0; i < maxRetries; i++) {
         try {
           const response = await fetch(url, options);
-          if (response.ok) return response;
-          if (response.status === 429 || response.status >= 500) {
+          if (response && response.ok) return response;
+          if (response && (response.status === 429 || response.status >= 500)) {
             await new Promise(res => setTimeout(res, delay));
             delay *= 2;
             continue;
           }
-          return response;
+          if (response) return response;
+          throw new Error('No response received from Gemini API.');
         } catch (err) {
-          if (i === maxRetries - 1) throw err;
+          lastError = err;
+          if (i === maxRetries - 1) throw new Error(err?.message || 'Unable to reach Gemini API.');
           await new Promise(res => setTimeout(res, delay));
           delay *= 2;
         }
       }
+
+      throw lastError || new Error('Unable to reach Gemini API.');
     }
 
     function getStoredGeminiApiKey() {
@@ -1582,24 +1588,35 @@
       }
 
       const url = `${modelUrl}${modelUrl.includes('?') ? '&' : '?'}key=${encodeURIComponent(apiKey)}`;
-      const response = await fetchGeminiWithBackoff(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
+      let response;
+
+      try {
+        response = await fetchGeminiWithBackoff(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+      } catch (err) {
+        throw new Error(err?.message || 'Unable to reach Gemini API.');
+      }
+
+      if (!response) {
+        throw new Error('No response received from Gemini API.');
+      }
+
+      let responsePayload = {};
+      try {
+        responsePayload = await response.json();
+      } catch (err) {
+        responsePayload = {};
+      }
 
       if (!response.ok) {
-        let errorPayload = {};
-        try {
-          errorPayload = await response.json();
-        } catch (err) {
-          // Ignore parse failures and surface a generic message.
-        }
-        const message = errorPayload?.error?.message || `HTTP ${response.status}`;
+        const message = responsePayload?.error?.message || responsePayload?.message || responsePayload?.error?.status || `HTTP ${response.status}`;
         throw new Error(message);
       }
 
-      return response.json();
+      return responsePayload;
     }
 
     // AI Tab Navigation
@@ -1804,7 +1821,7 @@
       loading.classList.remove('hidden');
       loading.classList.add('flex');
 
-      const apiUrl = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp-image-generation:generateContent';
+      const apiUrl = 'https://generativelanguage.googleapis.com/v1beta/models/imagen-3.0-generate-002:predict';
       const apiKey = getStoredGeminiApiKey();
 
       if (!apiKey) {
@@ -1818,24 +1835,21 @@
       }
 
       const payload = {
-        contents: [{ parts: [{ text: promptText }] }],
-        generationConfig: {
-          responseModalities: ['TEXT', 'IMAGE']
-        }
+        instances: [{ prompt: promptText }],
+        parameters: { sampleCount: 1 }
       };
 
       try {
         const result = await callGeminiApi(apiUrl, payload, apiKey);
-        const imagePart = result?.candidates?.[0]?.content?.parts?.find(part => part.inlineData?.data);
+        const imageData = result?.predictions?.[0]?.bytesBase64Encoded;
 
-        if (imagePart?.inlineData?.data) {
-          const mimeType = imagePart.inlineData.mimeType || 'image/png';
-          const imageUrl = `data:${mimeType};base64,${imagePart.inlineData.data}`;
+        if (imageData) {
+          const imageUrl = `data:image/png;base64,${imageData}`;
           img.src = imageUrl;
           img.classList.remove('hidden');
           showToast('AI Brand Asset generated successfully!');
         } else {
-          const textReply = result?.candidates?.[0]?.content?.parts?.map(part => part.text || '').join('') || '';
+          const textReply = result?.predictions?.[0]?.mimeType || '';
           throw new Error(textReply || 'No image data returned by the API.');
         }
       } catch (e) {
