@@ -1542,7 +1542,27 @@
       }
     }
 
-    // 1. Generate Brand Copy using gemini-3-flash-preview
+    async function callGeminiProxy(modelUrl, payload) {
+      const response = await fetch('/api/gemini', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: modelUrl, body: payload })
+      });
+
+      if (!response.ok) {
+        let errorPayload = {};
+        try {
+          errorPayload = await response.json();
+        } catch (e) {
+          // Ignore parse errors
+        }
+        throw new Error(errorPayload.error || `HTTP ${response.status}`);
+      }
+
+      return response.json();
+    }
+
+    // 1. Generate Brand Copy using Gemini
     async function generateBrandCopy() {
       const topic = document.getElementById('aiCopyTopic').value.trim();
       const tone = document.getElementById('aiCopyTone').value;
@@ -1557,9 +1577,7 @@
 
       const systemPrompt = "You are a Chief Brand Officer for Shaheen Developers (founded by Muhammad Ismail). Write concise, high-tech brand identity copy. Provide 1) Tagline, 2) Elevator Pitch (2 sentences), and 3) Core Mission Statement.";
       const userQuery = `Target Niche: ${topic}\nBrand Tone: ${tone}`;
-
-      const apiKey = "";
-      const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${apiKey}`;
+      const apiUrl = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent';
 
       const payload = {
         contents: [{ parts: [{ text: userQuery }] }],
@@ -1567,12 +1585,7 @@
       };
 
       try {
-        const response = await fetchGeminiWithBackoff(apiUrl, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload)
-        });
-        const data = await response.json();
+        const data = await callGeminiProxy(apiUrl, payload);
         const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
 
         if (text) {
@@ -1582,7 +1595,7 @@
           output.innerHTML = `<p class="text-red-400">Unable to generate response. Please try again.</p>`;
         }
       } catch (e) {
-        output.innerHTML = `<p class="text-red-400">Error connecting to Gemini API.</p>`;
+        output.innerHTML = `<p class="text-red-400">${e?.message || 'Error connecting to Gemini API.'}</p>`;
       } finally {
         btn.disabled = false;
         btn.innerHTML = `<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg><span>Generate Brand Copy (Gemini Flash)</span>`;
@@ -1602,8 +1615,7 @@
       btn.disabled = true;
       btn.innerHTML = `<span>Synthesizing Palette...</span>`;
 
-      const apiKey = "";
-      const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${apiKey}`;
+      const apiUrl = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent';
 
       const payload = {
         contents: [{ parts: [{ text: `Generate a harmonious 5-color high-tech brand palette for: "${prompt}".` }] }],
@@ -1633,12 +1645,7 @@
       };
 
       try {
-        const response = await fetchGeminiWithBackoff(apiUrl, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload)
-        });
-        const data = await response.json();
+        const data = await callGeminiProxy(apiUrl, payload);
         const jsonText = data.candidates?.[0]?.content?.parts?.[0]?.text;
         
         if (jsonText) {
@@ -1663,14 +1670,14 @@
           }
         }
       } catch (e) {
-        showToast("Error generating palette.");
+        showToast(e?.message || "Error generating palette.");
       } finally {
         btn.disabled = false;
         btn.innerHTML = `<span>Synthesize 5-Color System</span>`;
       }
     }
 
-    // 3. Generate Image with imagen-4.0-generate-001
+    // 3. Generate Image with Gemini image model
     async function generateAiImage() {
       const promptText = document.getElementById('aiImagePrompt').value.trim();
       const btn = document.getElementById('btnGenerateImage');
@@ -1678,42 +1685,47 @@
       const img = document.getElementById('aiImageResult');
       const placeholder = document.getElementById('aiImagePlaceholder');
 
-      if (!promptText) return;
+      if (!promptText) {
+        placeholder.innerText = 'Please enter a prompt before generating.';
+        placeholder.classList.remove('hidden');
+        return;
+      }
 
       btn.disabled = true;
       placeholder.classList.add('hidden');
       img.classList.add('hidden');
+      img.removeAttribute('src');
       loading.classList.remove('hidden');
       loading.classList.add('flex');
 
-      const apiKey = "";
-      const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/imagen-4.0-generate-001:predict?key=${apiKey}`;
-
+      const apiUrl = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp-image-generation:generateContent';
       const payload = {
-        instances: [{ prompt: promptText }],
-        parameters: { sampleCount: 1 }
+        contents: [{ parts: [{ text: promptText }] }],
+        generationConfig: {
+          responseModalities: ['TEXT', 'IMAGE']
+        }
       };
 
       try {
-        const response = await fetchGeminiWithBackoff(apiUrl, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload)
-        });
-        const result = await response.json();
+        const result = await callGeminiProxy(apiUrl, payload);
+        const imagePart = result?.candidates?.[0]?.content?.parts?.find(part => part.inlineData?.data);
 
-        if (result.predictions && result.predictions[0]?.bytesBase64Encoded) {
-          const imageUrl = `data:image/png;base64,${result.predictions[0].bytesBase64Encoded}`;
+        if (imagePart?.inlineData?.data) {
+          const mimeType = imagePart.inlineData.mimeType || 'image/png';
+          const imageUrl = `data:${mimeType};base64,${imagePart.inlineData.data}`;
           img.src = imageUrl;
           img.classList.remove('hidden');
-          showToast("AI Brand Asset generated successfully!");
+          showToast('AI Brand Asset generated successfully!');
         } else {
-          placeholder.innerText = "Failed to generate image.";
-          placeholder.classList.remove('hidden');
+          const textReply = result?.candidates?.[0]?.content?.parts?.map(part => part.text || '').join('') || '';
+          throw new Error(textReply || 'No image data returned by the API.');
         }
       } catch (e) {
-        placeholder.innerText = "Error calling Imagen API.";
+        console.error('Image generation failed:', e);
+        const message = e?.message || 'Unknown error while calling Gemini image model.';
+        placeholder.innerText = message;
         placeholder.classList.remove('hidden');
+        showToast(message);
       } finally {
         loading.classList.add('hidden');
         loading.classList.remove('flex');

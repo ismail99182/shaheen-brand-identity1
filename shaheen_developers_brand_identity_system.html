@@ -1590,7 +1590,27 @@
       }
     }
 
-    // 1. Generate Brand Copy using gemini-3-flash-preview
+    async function callGeminiProxy(modelUrl, payload) {
+      const response = await fetch('/api/gemini', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: modelUrl, body: payload })
+      });
+
+      if (!response.ok) {
+        let errorPayload = {};
+        try {
+          errorPayload = await response.json();
+        } catch (e) {
+          // Ignore parse errors
+        }
+        throw new Error(errorPayload.error || `HTTP ${response.status}`);
+      }
+
+      return response.json();
+    }
+
+    // 1. Generate Brand Copy using Gemini
     async function generateBrandCopy() {
       const topic = document.getElementById('aiCopyTopic').value.trim();
       const tone = document.getElementById('aiCopyTone').value;
@@ -1605,7 +1625,6 @@
 
       const systemPrompt = "You are a Chief Brand Officer for Shaheen Developers (founded by Muhammad Ismail). Write concise, high-tech brand identity copy. Provide 1) Tagline, 2) Elevator Pitch (2 sentences), and 3) Core Mission Statement.";
       const userQuery = `Target Niche: ${topic}\nBrand Tone: ${tone}`;
-
       const apiUrl = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent';
 
       const payload = {
@@ -1707,10 +1726,9 @@
       }
     }
 
-    // 3. Generate Image with imagen-4.0-generate-001
+    // 3. Generate Image with Gemini image model
     async function generateAiImage() {
       const promptText = document.getElementById('aiImagePrompt').value.trim();
-      const apiKeyInput = document.getElementById('aiImageApiKey');
       const btn = document.getElementById('btnGenerateImage');
       const loading = document.getElementById('aiImageLoading');
       const img = document.getElementById('aiImageResult');
